@@ -4,11 +4,7 @@ const PUBLIC = "https://777keiba-jp.pages.dev";
 export async function onRequest(context) {
   const incoming = new URL(context.request.url);
 
-  // wp-json は専用Functionに任せる
-  if (incoming.pathname.startsWith("/wp-json/")) {
-    return fetch(context.request);
-  }
-
+  // WordPress側へ転送
   const target = new URL(
     incoming.pathname + incoming.search,
     ORIGIN
@@ -22,6 +18,21 @@ export async function onRequest(context) {
 
   const method = context.request.method;
 
+  // CORS preflight
+  if (method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": PUBLIC,
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods":
+          "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers":
+          "Content-Type, X-WP-Nonce, Authorization",
+      },
+    });
+  }
+
   const request = new Request(target, {
     method,
     headers,
@@ -34,7 +45,28 @@ export async function onRequest(context) {
   const response = await fetch(request);
   const responseHeaders = new Headers(response.headers);
 
-  // リダイレクト先をPages側へ
+  // CORS
+  responseHeaders.set(
+    "Access-Control-Allow-Origin",
+    PUBLIC
+  );
+
+  responseHeaders.set(
+    "Access-Control-Allow-Credentials",
+    "true"
+  );
+
+  responseHeaders.set(
+    "Access-Control-Allow-Methods",
+    "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS"
+  );
+
+  responseHeaders.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type, X-WP-Nonce, Authorization"
+  );
+
+  // リダイレクト書き換え
   const location = responseHeaders.get("Location");
 
   if (location) {
@@ -42,8 +74,8 @@ export async function onRequest(context) {
       const url = new URL(location, ORIGIN);
 
       if (url.hostname === "kk777.site.je") {
-        url.protocol = incoming.protocol;
-        url.host = incoming.host;
+        url.protocol = "https:";
+        url.hostname = "777keiba-jp.pages.dev";
 
         responseHeaders.set(
           "Location",
@@ -70,23 +102,29 @@ export async function onRequest(context) {
   const contentType =
     responseHeaders.get("content-type") || "";
 
-  // HTMLだけ書き換え
+  /*
+   * HTML内に埋め込まれた
+   * kk777.site.je/wp-json/
+   * もPages側へ変更する
+   */
   if (contentType.includes("text/html")) {
-    const rewriter = new HTMLRewriter()
-      .on("a", new RewriteAttribute("href"))
-      .on("form", new RewriteAttribute("action"))
-      .on("img", new RewriteAttribute("src"))
-      .on("script", new RewriteAttribute("src"))
-      .on("link", new RewriteAttribute("href"))
-      .on("iframe", new RewriteAttribute("src"));
+    let html = await response.text();
 
-    return rewriter.transform(
-      new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: responseHeaders,
-      })
+    html = html.replaceAll(
+      "https://kk777.site.je",
+      PUBLIC
     );
+
+    html = html.replaceAll(
+      "http://kk777.site.je",
+      PUBLIC
+    );
+
+    return new Response(html, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: responseHeaders,
+    });
   }
 
   return new Response(response.body, {
@@ -94,23 +132,4 @@ export async function onRequest(context) {
     statusText: response.statusText,
     headers: responseHeaders,
   });
-}
-
-class RewriteAttribute {
-  constructor(attribute) {
-    this.attribute = attribute;
-  }
-
-  element(element) {
-    const value = element.getAttribute(this.attribute);
-
-    if (!value) return;
-
-    if (value.startsWith(ORIGIN)) {
-      element.setAttribute(
-        this.attribute,
-        PUBLIC + value.slice(ORIGIN.length)
-      );
-    }
-  }
 }
