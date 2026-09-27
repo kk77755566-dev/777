@@ -3,20 +3,48 @@ const ORIGIN = "https://kk777.site.je";
 export async function onRequest(context) {
   const incoming = new URL(context.request.url);
 
-  // Pages側へのアクセスをWordPress側へ転送
   const target = new URL(
     incoming.pathname + incoming.search,
     ORIGIN
   );
 
+  /*
+   * CORS preflight
+   *
+   * ブラウザから OPTIONS が来た場合は、
+   * Pages側で直接OKを返す。
+   */
+  if (context.request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": incoming.origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods":
+          "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS",
+        "Access-Control-Allow-Headers":
+          "Content-Type, X-WP-Nonce, X-HTTP-Method-Override, Authorization",
+        "Access-Control-Max-Age": "86400",
+      },
+    });
+  }
+
+  /*
+   * リクエストヘッダーをWordPressへ転送
+   */
   const headers = new Headers(context.request.headers);
 
-  // Pages側のHostはWordPressへ送らない
+  // Pages側のHostは送らない
   headers.delete("host");
 
   // WordPressにHTTPSとして認識させる
   headers.set("X-Forwarded-Proto", "https");
   headers.set("X-Forwarded-Host", incoming.host);
+
+  /*
+   * Cookie / X-WP-Nonce / Authorization は
+   * context.request.headersからそのまま引き継ぐ
+   */
 
   const request = new Request(target, {
     method: context.request.method,
@@ -28,9 +56,12 @@ export async function onRequest(context) {
   });
 
   const response = await fetch(request);
+
   const responseHeaders = new Headers(response.headers);
 
-  // WordPressからのリダイレクトを書き換える
+  /*
+   * WordPressからのリダイレクトを書き換える
+   */
   const location = responseHeaders.get("Location");
 
   if (location) {
@@ -51,7 +82,11 @@ export async function onRequest(context) {
     }
   }
 
-  // CookieのDomainを削除
+  /*
+   * CookieのDomainを削除
+   *
+   * WordPressのログインCookieをPages側で利用するため。
+   */
   const cookies = responseHeaders.getSetCookie?.();
 
   if (cookies && cookies.length > 0) {
@@ -65,35 +100,45 @@ export async function onRequest(context) {
     }
   }
 
+  /*
+   * 念のためPages側のCORSヘッダーを設定
+   */
+  responseHeaders.set(
+    "Access-Control-Allow-Origin",
+    incoming.origin
+  );
+
+  responseHeaders.set(
+    "Access-Control-Allow-Credentials",
+    "true"
+  );
+
+  responseHeaders.set(
+    "Access-Control-Allow-Methods",
+    "GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS"
+  );
+
+  responseHeaders.set(
+    "Access-Control-Allow-Headers",
+    "Content-Type, X-WP-Nonce, X-HTTP-Method-Override, Authorization"
+  );
+
+  /*
+   * HTMLだけWordPressのURLを書き換える
+   */
   const contentType =
     responseHeaders.get("content-type") || "";
 
-  /*
-   * HTMLの場合
-   *
-   * WordPressがHTML内に
-   * https://kk777.site.je/wp-json/
-   * などを書き込んでいるため、
-   * Pages側URLへ置換する。
-   */
   if (contentType.includes("text/html")) {
     let html = await response.text();
 
     const publicOrigin = incoming.origin;
 
-    // WordPress本体URL
     html = html.replaceAll(
       ORIGIN,
       publicOrigin
     );
 
-    // REST API URL
-    html = html.replaceAll(
-      ORIGIN + "/wp-json",
-      publicOrigin + "/wp-json"
-    );
-
-    // 念のためhttp版も置換
     html = html.replaceAll(
       "http://kk777.site.je",
       publicOrigin
@@ -106,6 +151,9 @@ export async function onRequest(context) {
     });
   }
 
+  /*
+   * JSON / REST API / CSS / JS / 画像など
+   */
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
