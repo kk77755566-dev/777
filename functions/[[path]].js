@@ -1,4 +1,4 @@
-const ORIGIN = "http://kk777.site.je";
+const ORIGIN = "https://kk777.site.je";
 
 export async function onRequest(context) {
   const incoming = new URL(context.request.url);
