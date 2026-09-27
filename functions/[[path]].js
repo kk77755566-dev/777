@@ -14,6 +14,7 @@ headers.delete("host");
 
 // WordPress側ではHTTPSアクセスとして扱う
 headers.set("X-Forwarded-Proto", "https");
+headers.set("X-Forwarded-Host", incoming.host);
 
   const request = new Request(target, {
     method: context.request.method,
