@@ -2,33 +2,44 @@ const ORIGIN = "https://kk777.site.je";
 
 export async function onRequest(context) {
   const incoming = new URL(context.request.url);
+
   const target = new URL(
     incoming.pathname + incoming.search,
     ORIGIN
   );
 
-const headers = new Headers(context.request.headers);
+  // 元のリクエストヘッダーを引き継ぐ
+  const headers = new Headers(context.request.headers);
 
-// 元のPages側のHostを送らない
-headers.delete("host");
+  // InfinityFree側には元のHostを送らない
+  headers.delete("host");
 
-// WordPress側ではHTTPSアクセスとして扱う
-headers.set("X-Forwarded-Proto", "https");
-headers.set("X-Forwarded-Host", incoming.host);
+  // WordPressにHTTPS経由でアクセスしていることを伝える
+  headers.set("X-Forwarded-Proto", "https");
+
+  // REST API / Gutenberg用
+  headers.set("X-Forwarded-For", incoming.hostname);
+
+  const method = context.request.method;
 
   const request = new Request(target, {
-    method: context.request.method,
+    method,
     headers,
-    body: ["GET", "HEAD"].includes(context.request.method)
+    body: ["GET", "HEAD"].includes(method)
       ? undefined
       : context.request.body,
     redirect: "manual",
   });
 
   const response = await fetch(request);
+
   const responseHeaders = new Headers(response.headers);
 
-  // WordPressからのリダイレクト先をPages側URLに書き換える
+  /*
+   * WordPressのリダイレクトを
+   * kk777.site.je → 777keiba-jp.pages.dev
+   * に書き換える
+   */
   const location = responseHeaders.get("Location");
 
   if (location) {
@@ -38,17 +49,25 @@ headers.set("X-Forwarded-Host", incoming.host);
       if (redirectUrl.hostname === "kk777.site.je") {
         redirectUrl.protocol = incoming.protocol;
         redirectUrl.hostname = incoming.hostname;
-        responseHeaders.set("Location", redirectUrl.toString());
+
+        responseHeaders.set(
+          "Location",
+          redirectUrl.toString()
+        );
       }
     } catch {
-      // Locationが通常のURLでない場合はそのまま
+      // 相対URLなどはそのまま
     }
   }
 
-  // CookieのDomainを削除して、pages.dev側で使えるようにする
+  /*
+   * CookieのDomainを削除
+   *
+   * WordPressのログイン・REST API・Nonceで重要
+   */
   const cookies = responseHeaders.getSetCookie?.();
 
-  if (cookies && cookies.length > 0) {
+  if (cookies?.length) {
     responseHeaders.delete("Set-Cookie");
 
     for (const cookie of cookies) {
@@ -59,18 +78,24 @@ headers.set("X-Forwarded-Host", incoming.host);
     }
   }
 
-  const contentType = responseHeaders.get("content-type") || "";
+  const contentType =
+    responseHeaders.get("content-type") || "";
 
-  // HTML内のkk777.site.jeを777keiba-jp.pages.devへ置換
+  /*
+   * HTMLだけURLを書き換える。
+   *
+   * REST APIのJSONは変更しない。
+   */
   if (contentType.includes("text/html")) {
-    const rewritten = new HTMLRewriter()
-      .on("a", new RewriteAttribute("href", ORIGIN, incoming.origin))
-      .on("form", new RewriteAttribute("action", ORIGIN, incoming.origin))
-      .on("img", new RewriteAttribute("src", ORIGIN, incoming.origin))
-      .on("script", new RewriteAttribute("src", ORIGIN, incoming.origin))
-      .on("link", new RewriteAttribute("href", ORIGIN, incoming.origin));
+    const rewriter = new HTMLRewriter()
+      .on("a", new RewriteAttribute("href"))
+      .on("form", new RewriteAttribute("action"))
+      .on("img", new RewriteAttribute("src"))
+      .on("script", new RewriteAttribute("src"))
+      .on("link", new RewriteAttribute("href"))
+      .on("iframe", new RewriteAttribute("src"));
 
-    return rewritten.transform(
+    return rewriter.transform(
       new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
@@ -79,6 +104,10 @@ headers.set("X-Forwarded-Host", incoming.host);
     );
   }
 
+  /*
+   * JSON / REST API / CSS / JS / 画像などは
+   * レスポンスをそのまま返す。
+   */
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -86,20 +115,24 @@ headers.set("X-Forwarded-Host", incoming.host);
   });
 }
 
+
 class RewriteAttribute {
-  constructor(attribute, origin, publicOrigin) {
+  constructor(attribute) {
     this.attribute = attribute;
-    this.origin = origin;
-    this.publicOrigin = publicOrigin;
   }
 
   element(element) {
     const value = element.getAttribute(this.attribute);
 
-    if (value && value.startsWith(this.origin)) {
+    if (!value) return;
+
+    if (value.startsWith(ORIGIN)) {
       element.setAttribute(
         this.attribute,
-        this.publicOrigin + value.slice(this.origin.length)
+        value.replace(
+          ORIGIN,
+          "https://777keiba-jp.pages.dev"
+        )
       );
     }
   }
