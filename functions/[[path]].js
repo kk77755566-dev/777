@@ -7,11 +7,13 @@ export async function onRequest(context) {
     ORIGIN
   );
 
-  const headers = new Headers(context.request.headers);
+const headers = new Headers(context.request.headers);
 
-  // WordPressに「元のアクセスはHTTPS」と伝える
-  headers.set("X-Forwarded-Proto", "https");
-  headers.set("X-Forwarded-Host", incoming.host);
+// 元のPages側のHostを送らない
+headers.delete("host");
+
+// WordPress側ではHTTPSアクセスとして扱う
+headers.set("X-Forwarded-Proto", "https");
 
   const request = new Request(target, {
     method: context.request.method,
