@@ -4,7 +4,6 @@ const PUBLIC = "https://777keiba-jp.pages.dev";
 export async function onRequest(context) {
   const incoming = new URL(context.request.url);
 
-  // WordPress側へ転送
   const target = new URL(
     incoming.pathname + incoming.search,
     ORIGIN
@@ -16,10 +15,7 @@ export async function onRequest(context) {
   headers.set("X-Forwarded-Proto", "https");
   headers.set("X-Forwarded-Host", incoming.host);
 
-  const method = context.request.method;
-
-  // CORS preflight
-  if (method === "OPTIONS") {
+  if (context.request.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
       headers: {
@@ -32,6 +28,8 @@ export async function onRequest(context) {
       },
     });
   }
+
+  const method = context.request.method;
 
   const request = new Request(target, {
     method,
@@ -50,23 +48,12 @@ export async function onRequest(context) {
     "Access-Control-Allow-Origin",
     PUBLIC
   );
-
   responseHeaders.set(
     "Access-Control-Allow-Credentials",
     "true"
   );
 
-  responseHeaders.set(
-    "Access-Control-Allow-Methods",
-    "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS"
-  );
-
-  responseHeaders.set(
-    "Access-Control-Allow-Headers",
-    "Content-Type, X-WP-Nonce, Authorization"
-  );
-
-  // リダイレクト書き換え
+  // リダイレクト
   const location = responseHeaders.get("Location");
 
   if (location) {
@@ -75,7 +62,7 @@ export async function onRequest(context) {
 
       if (url.hostname === "kk777.site.je") {
         url.protocol = "https:";
-        url.hostname = "777keiba-jp.pages.dev";
+        url.host = "777keiba-jp.pages.dev";
 
         responseHeaders.set(
           "Location",
@@ -85,7 +72,7 @@ export async function onRequest(context) {
     } catch {}
   }
 
-  // CookieのDomainを削除
+  // Cookie
   const cookies = responseHeaders.getSetCookie?.();
 
   if (cookies?.length) {
@@ -97,34 +84,6 @@ export async function onRequest(context) {
         cookie.replace(/;\s*Domain=[^;]+/i, "")
       );
     }
-  }
-
-  const contentType =
-    responseHeaders.get("content-type") || "";
-
-  /*
-   * HTML内に埋め込まれた
-   * kk777.site.je/wp-json/
-   * もPages側へ変更する
-   */
-  if (contentType.includes("text/html")) {
-    let html = await response.text();
-
-    html = html.replaceAll(
-      "https://kk777.site.je",
-      PUBLIC
-    );
-
-    html = html.replaceAll(
-      "http://kk777.site.je",
-      PUBLIC
-    );
-
-    return new Response(html, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: responseHeaders,
-    });
   }
 
   return new Response(response.body, {
